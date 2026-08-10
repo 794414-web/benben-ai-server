@@ -79,7 +79,12 @@ systemctl enable benben-ai
 systemctl start benben-ai
 
 cd /usr/local/benben-ai
-pip3 install -r requirements.txt || pip install -r requirements.txt || echo "NOTE: Python deps install skipped"
+echo "Upgrading pip..."
+pip3 install --upgrade pip --quiet 2>/dev/null || true
+echo "Installing Python dependencies..."
+pip3 install -r requirements.txt --quiet 2>/dev/null || pip3 install -r requirements.txt 2>/dev/null || echo "NOTE: Python deps install skipped"
+echo "Verifying service..."
+systemctl is-active benben-ai && echo "Service is running!" || echo "NOTE: service may need manual start"
 
 rm -rf /opt/benben-install
 
