@@ -21,11 +21,24 @@ yum install -y python3 python3-pip tar gzip
 
 echo "[2/4] Downloading..."
 REPO_URL="https://raw.githubusercontent.com/794414-web/benben-ai-server/main"
+GITEE_URL="https://gitee.com/794414-web/benben-ai-server/raw/main"
 cd /opt
 rm -rf benben-install
 mkdir benben-install
 cd benben-install
-curl -sSL "$REPO_URL/rpm_package/benben-ai-1.0.0.tar.gz" -o src.tar.gz
+echo "Trying GitHub..."
+curl -sSL --connect-timeout 10 "$REPO_URL/benben-ai-1.0.0.tar.gz" -o src.tar.gz
+if [ ! -s src.tar.gz ] || ! gzip -t src.tar.gz 2>/dev/null; then
+    echo "GitHub failed, trying Gitee mirror..."
+    curl -sSL --connect-timeout 10 "$GITEE_URL/benben-ai-1.0.0.tar.gz" -o src.tar.gz
+fi
+if [ ! -s src.tar.gz ] || ! gzip -t src.tar.gz 2>/dev/null; then
+    echo "ERROR: Failed to download benben-ai-1.0.0.tar.gz"
+    echo "Please manually download from:"
+    echo "  GitHub: $REPO_URL/benben-ai-1.0.0.tar.gz"
+    echo "  Gitee:  $GITEE_URL/benben-ai-1.0.0.tar.gz"
+    exit 1
+fi
 
 echo "[3/4] Extracting and installing..."
 tar xzf src.tar.gz
