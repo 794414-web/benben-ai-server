@@ -21,22 +21,21 @@ yum install -y python3 python3-pip tar gzip
 
 echo "[2/4] Downloading..."
 REPO_URL="https://raw.githubusercontent.com/794414-web/benben-ai-server/main"
-GITEE_URL="https://gitee.com/ken794414/benben-ai-server/raw/main"
+MIRROR_URL="https://ghp.ci/https://raw.githubusercontent.com/794414-web/benben-ai-server/main"
 cd /opt
 rm -rf benben-install
 mkdir benben-install
 cd benben-install
-echo "Trying GitHub..."
-curl -sSL --connect-timeout 10 "$REPO_URL/benben-ai-1.0.0.tar.gz" -o src.tar.gz
+echo "Downloading package..."
+curl -sSL --connect-timeout 15 "$REPO_URL/benben-ai-1.0.0.tar.gz" -o src.tar.gz
 if [ ! -s src.tar.gz ] || ! gzip -t src.tar.gz 2>/dev/null; then
-    echo "GitHub failed, trying Gitee mirror..."
-    curl -sSL --connect-timeout 10 "$GITEE_URL/benben-ai-1.0.0.tar.gz" -o src.tar.gz
+    echo "GitHub direct failed, trying CDN mirror..."
+    curl -sSL --connect-timeout 15 "$MIRROR_URL/benben-ai-1.0.0.tar.gz" -o src.tar.gz
 fi
 if [ ! -s src.tar.gz ] || ! gzip -t src.tar.gz 2>/dev/null; then
     echo "ERROR: Failed to download benben-ai-1.0.0.tar.gz"
     echo "Please manually download from:"
-    echo "  GitHub: $REPO_URL/benben-ai-1.0.0.tar.gz"
-    echo "  Gitee:  $GITEE_URL/benben-ai-1.0.0.tar.gz"
+    echo "  $REPO_URL/benben-ai-1.0.0.tar.gz"
     exit 1
 fi
 
