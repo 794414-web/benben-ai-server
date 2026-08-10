@@ -32,35 +32,35 @@ echo "[1/6] Installing base packages..."
 yum install -y epel-release 2>/dev/null || true
 yum install -y curl tar gzip gcc openssl-devel bzip2-devel libffi-devel zlib-devel make 2>/dev/null || true
 
-# 安装 Python 3.9
+# 安装 Python 3.9+ (通过 Miniconda 预编译二进制，无需编译)
 PYTHON_BIN=""
 if [ -x /usr/local/bin/python3.9 ]; then
     PYTHON_BIN="/usr/local/bin/python3.9"
     echo "[Python] Python 3.9 already installed"
 elif [ -x /opt/rh/rh-python39/root/usr/bin/python3 ]; then
-    PYTHON_BIN="/opt/rh/rh-python39/root/usr/bin/python3"
+    ln -sf /opt/rh/rh-python39/root/usr/bin/python3 /usr/local/bin/python3.9
+    ln -sf /opt/rh/rh-python39/root/usr/bin/pip3 /usr/local/bin/pip3.9
+    PYTHON_BIN="/usr/local/bin/python3.9"
     echo "[Python] Using SCL Python 3.9"
 else
-    echo "[Python] Installing Python 3.9..."
-    # 尝试 SCL 方式
+    echo "[Python] Installing Miniconda with Python 3.11..."
+    # 尝试 SCL
     if yum install -y centos-release-scl-rh 2>/dev/null && yum install -y rh-python39 2>/dev/null; then
         ln -sf /opt/rh/rh-python39/root/usr/bin/python3 /usr/local/bin/python3.9
         ln -sf /opt/rh/rh-python39/root/usr/bin/pip3 /usr/local/bin/pip3.9
         PYTHON_BIN="/usr/local/bin/python3.9"
         echo "[Python] Python 3.9 installed via SCL"
     else
-        # 编译安装
-        echo "[Python] Compiling Python 3.9 from source..."
+        # 使用 Miniconda 预编译二进制（支持 CentOS 6+，x86_64）
+        echo "[Python] Downloading Miniconda... (pre-compiled, no gcc needed)"
         cd /tmp
-        curl -sSL "https://www.python.org/ftp/python/3.9.19/Python-3.9.19.tgz" -o Python-3.9.19.tgz
-        tar xzf Python-3.9.19.tgz
-        cd Python-3.9.19
-        ./configure --prefix=/usr/local --enable-optimizations 2>/dev/null || ./configure --prefix=/usr/local
-        make -j$(nproc) 2>/dev/null || make
-        make altinstall 2>/dev/null || make install
-        cd /tmp && rm -rf Python-3.9.19 Python-3.9.19.tgz
+        curl -sSL "https://repo.anaconda.com/miniconda/Miniconda3-py311_24.1.2-0-Linux-x86_64.sh" -o miniconda.sh
+        bash miniconda.sh -b -p /opt/benben-conda
+        rm -f miniconda.sh
+        ln -sf /opt/benben-conda/bin/python3.11 /usr/local/bin/python3.9
+        ln -sf /opt/benben-conda/bin/pip /usr/local/bin/pip3.9
         PYTHON_BIN="/usr/local/bin/python3.9"
-        echo "[Python] Python 3.9 compiled and installed"
+        echo "[Python] Python 3.11 installed via Miniconda"
     fi
 fi
 
