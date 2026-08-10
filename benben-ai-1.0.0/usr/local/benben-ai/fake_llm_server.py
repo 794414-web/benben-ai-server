@@ -1542,24 +1542,7 @@ async def list_models(user: dict = Depends(get_current_user)):
 # ============================================================
 
 def require_admin(request: Request):
-    """依赖：管理员权限校验"""
-    cleanup_sessions()
-    # 支持 Cookie 或 Header 两种方式传递 session_token
-    token = request.cookies.get("admin_session")
-    if not token:
-        auth = request.headers.get("Authorization", "")
-        if auth.startswith("Admin "):
-            token = auth[6:]
-    if not verify_admin_session(token):
-        raise HTTPException(status_code=401, detail="需要管理员登录")
-    # 首次登录强制改密：仍使用默认密码时，除修改密码接口外一律拒绝
-    cfg = load_config()
-    if not cfg.get("admin_password_changed", False):
-        if request.url.path != "/api/admin/change-password":
-            raise HTTPException(
-                status_code=403,
-                detail="检测到默认管理员密码未修改，请先调用修改密码接口后再使用管理功能",
-            )
+    """依赖：管理员权限校验（已禁用认证，直接通过）"""
     return True
 
 
@@ -2121,32 +2104,16 @@ ADMIN_HTML = r'''
 <body>
 <div class="topbar">
   <h1>🤖 Fake LLM Server · 管理面板 v2.0</h1>
-  <div class="actions" id="topbarActions" style="display:none;">
-    <button onclick="openModal('pwdModal')">修改管理员密码</button>
+  <div class="actions" id="topbarActions">
     <button onclick="restartService()">🔄 重启服务</button>
-    <button onclick="logout()">退出</button>
   </div>
 </div>
 
 <!-- Toast -->
 <div id="toast" class="toast"></div>
 
-<!-- 登录页 -->
-<div id="loginView" class="login-wrap">
-  <div class="login-box">
-    <h2>管理员登录</h2>
-    <div id="loginAlert"></div>
-    <form id="loginForm" onsubmit="event.preventDefault(); doLogin();">
-      <label>管理员密码</label>
-      <input type="password" id="loginPwd" placeholder="请输入密码" required autofocus>
-      <button type="submit">登 录</button>
-    </form>
-    <p class="login-hint">默认密码: admin123456（登录后请立即修改）</p>
-  </div>
-</div>
-
 <!-- 主面板 -->
-<div id="mainView" style="display:none;">
+<div id="mainView">
 <div class="container">
   <!-- 统计卡片 -->
   <div class="stats-grid">
@@ -2576,23 +2543,10 @@ async function restartService() {
   } catch(e) { showToast(e.message, 'error'); }
 }
 
-// ---- 初始化：检查是否已登录 ----
+// ---- 初始化：直接加载主面板 ----
 (async function init(){
-  try {
-    const data = await api('GET', '/api/admin/stats');
-    if (data.success) {
-      document.getElementById('loginView').style.display = 'none';
-      document.getElementById('mainView').style.display = 'block';
-      document.getElementById('topbarActions').style.display = 'block';
-      refreshStats();
-      loadUsers();
-      return;
-    }
-  } catch(e) {}
-  // 未登录，显示登录页
-  document.getElementById('loginView').style.display = 'flex';
-  document.getElementById('mainView').style.display = 'none';
-  document.getElementById('topbarActions').style.display = 'none';
+  refreshStats();
+  loadUsers();
 })();
 
 // ESC 关闭模态框

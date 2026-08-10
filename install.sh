@@ -111,6 +111,9 @@ mkdir -p /etc/benben-ai
 mkdir -p /var/log/benben-ai
 mkdir -p /var/lib/benben-ai
 
+# 清除旧配置确保使用默认密码
+rm -f /usr/local/benben-ai/config.json
+
 cp -r usr/local/benben-ai/* /usr/local/benben-ai/
 cp etc/benben-ai/config.json /etc/benben-ai/
 cp etc/systemd/benben-ai.service /etc/systemd/system/
