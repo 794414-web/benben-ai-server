@@ -19,7 +19,7 @@ yum install -y epel-release
 yum install -y python3 python3-pip rpm-build tar gzip
 
 echo "[2/4] Downloading..."
-REPO_URL="https://raw.githubusercontent.com/USER/REPO/main/rpm_package"
+REPO_URL="https://raw.githubusercontent.com/794414-web/benben-ai-server/main/rpm_package"
 cd /opt
 rm -rf benben-build
 mkdir benben-build
