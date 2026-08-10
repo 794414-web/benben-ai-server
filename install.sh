@@ -15,6 +15,19 @@ if [ ! -f /etc/redhat-release ]; then
     exit 1
 fi
 
+# 自动清理旧版本（如果存在）
+if systemctl list-unit-files benben-ai &>/dev/null; then
+    echo "[Cleanup] Removing old installation..."
+    systemctl stop benben-ai 2>/dev/null || true
+    systemctl disable benben-ai 2>/dev/null || true
+    systemctl daemon-reload 2>/dev/null || true
+    rm -f /etc/systemd/system/benben-ai.service
+    rm -rf /usr/local/benben-ai
+    rm -rf /etc/benben-ai
+    rm -rf /var/lib/benben-ai
+    echo "[Cleanup] Old version removed"
+fi
+
 echo "[1/5] Installing dependencies..."
 yum install -y epel-release
 yum install -y python3 python3-pip tar gzip
