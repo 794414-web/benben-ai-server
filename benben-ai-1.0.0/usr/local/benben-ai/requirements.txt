@@ -1,0 +1,6 @@
+# 车载AI助手"奔奔" - 免费假大模型服务 依赖清单
+# 安装：pip install -r requirements.txt
+
+fastapi>=0.110
+uvicorn[standard]>=0.27
+pydantic>=2.0

@@ -1,0 +1,19 @@
+{
+  "service": {
+    "port": 9998,
+    "host": "0.0.0.0",
+    "python_path": "/usr/bin/python3",
+    "script_path": "/usr/local/benben-ai/fake_llm_server.py",
+    "log_path": "/var/log/benben-ai/service.log",
+    "working_dir": "/usr/local/benben-ai"
+  },
+  "paths": {
+    "logs": "/var/lib/benben-ai/fake_llm_logs",
+    "usage_logs": "/var/lib/benben-ai/usage_logs",
+    "mock_logs": "/var/lib/benben-ai/mock_logs",
+    "config": "/etc/benben-ai/config.json"
+  },
+  "defaults": {
+    "admin_password": "admin123456"
+  }
+}
