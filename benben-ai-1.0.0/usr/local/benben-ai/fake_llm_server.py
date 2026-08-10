@@ -1052,7 +1052,12 @@ import hashlib
 import threading
 from pathlib import Path
 from datetime import datetime, timedelta
-from contextlib import asynccontextmanager
+from typing import Optional
+
+try:
+    from contextlib import asynccontextmanager
+except ImportError:
+    asynccontextmanager = None
 
 try:
     from fastapi import FastAPI, Request, HTTPException, Depends, status
@@ -1119,7 +1124,7 @@ def generate_token() -> str:
     return "benben_" + secrets.token_hex(16)
 
 
-def get_user_by_token(token: str) -> dict | None:
+def get_user_by_token(token: str) -> Optional[dict]:
     """通过 Token 查找用户"""
     users = load_users()
     token_hash = _hash_token(token)
@@ -1129,7 +1134,7 @@ def get_user_by_token(token: str) -> dict | None:
     return None
 
 
-def get_user_by_id(user_id: str) -> dict | None:
+def get_user_by_id(user_id: str) -> Optional[dict]:
     """通过 ID 查找用户（不包含token_hash返回前端）"""
     users = load_users()
     if user_id in users:
@@ -1277,7 +1282,7 @@ class CreateUserRequest(BaseModel):
 class UpdateUserRequest(BaseModel):
     name: str = ""
     remark: str = ""
-    enabled: bool | None = None
+    enabled: Optional[bool] = None
 
 
 class AdminLoginRequest(BaseModel):
@@ -1310,7 +1315,7 @@ def create_admin_session() -> str:
     return token
 
 
-def verify_admin_session(token: str | None) -> bool:
+def verify_admin_session(token: Optional[str]) -> bool:
     if not token:
         return False
     if token in ADMIN_SESSIONS:
@@ -1393,10 +1398,10 @@ def log_user_request(user_id: str, user_name: str, request_data: dict, response_
 # FastAPI 应用
 # ============================================================
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    """启动和关闭事件"""
-    # 启动时：确保默认管理员密码写入配置
+app = FastAPI(title="Fake LLM Server - 多用户版")
+
+@app.on_event("startup")
+async def startup_event():
     load_config()
     print(f"\n[启动] Fake LLM 多用户服务 v2.0")
     print(f"[启动] 服务地址: http://{HOST}:{PORT}")
@@ -1406,16 +1411,16 @@ async def lifespan(app: FastAPI):
     if len(users) == 0:
         print(f"[提示] 首次使用请登录管理面板创建用户")
         print(f"[提示] 默认管理员密码: {DEFAULT_ADMIN_PASSWORD}")
-    yield
+
+@app.on_event("shutdown")
+async def shutdown_event():
     print(f"\n[关闭] 服务已停止")
 
-
-app = FastAPI(title="Fake LLM Server - 多用户版", lifespan=lifespan)
 security = HTTPBearer(auto_error=False)
 
 
 async def get_current_user(
-    credentials: HTTPAuthorizationCredentials | None = Depends(security),
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
 ) -> dict:
     """依赖：根据 Authorization header 获取用户"""
     if not credentials:
