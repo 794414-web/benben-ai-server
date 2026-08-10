@@ -1,5 +1,40 @@
-# 强制所有脚本使用 LF 换行符
+# Text files - force LF line endings
 *.sh text eol=lf
 *.spec text eol=lf
 *.py text eol=lf
-* text eol=lf
+*.md text eol=lf
+*.json text eol=lf
+*.txt text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.cfg text eol=lf
+*.ini text eol=lf
+
+# Binary files - do not modify
+*.gz binary
+*.tar binary
+*.zip binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.so binary
+*.dll binary
+*.exe binary
+*.apk binary
+*.rpm binary
+*.deb binary
+*.whl binary
+*.pyc binary
+*.pyo binary
+*.pyd binary
+*.class binary
+*.jar binary
+*.war binary
+*.egg binary
+*.o binary
+*.obj binary
+*.a binary
+*.lib binary

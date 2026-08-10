@@ -20,22 +20,38 @@ yum install -y epel-release
 yum install -y python3 python3-pip tar gzip
 
 echo "[2/4] Downloading..."
-REPO_URL="https://raw.githubusercontent.com/794414-web/benben-ai-server/main"
-MIRROR_URL="https://ghp.ci/https://raw.githubusercontent.com/794414-web/benben-ai-server/main"
+FILE_NAME="benben-ai-1.0.0.tar.gz"
+MIRRORS=(
+    "https://raw.githubusercontent.com/794414-web/benben-ai-server/main/$FILE_NAME"
+    "https://cdn.jsdelivr.net/gh/794414-web/benben-ai-server@main/$FILE_NAME"
+    "https://raw.kkgithub.com/794414-web/benben-ai-server/main/$FILE_NAME"
+)
 cd /opt
 rm -rf benben-install
 mkdir benben-install
 cd benben-install
-echo "Downloading package..."
-curl -sSL --connect-timeout 15 "$REPO_URL/benben-ai-1.0.0.tar.gz" -o src.tar.gz
-if [ ! -s src.tar.gz ] || ! gzip -t src.tar.gz 2>/dev/null; then
-    echo "GitHub direct failed, trying CDN mirror..."
-    curl -sSL --connect-timeout 15 "$MIRROR_URL/benben-ai-1.0.0.tar.gz" -o src.tar.gz
-fi
-if [ ! -s src.tar.gz ] || ! gzip -t src.tar.gz 2>/dev/null; then
-    echo "ERROR: Failed to download benben-ai-1.0.0.tar.gz"
-    echo "Please manually download from:"
-    echo "  $REPO_URL/benben-ai-1.0.0.tar.gz"
+
+download_ok=0
+for mirror in "${MIRRORS[@]}"; do
+    echo "Trying: $mirror"
+    http_code=$(curl -sSL -w "%{http_code}" --connect-timeout 10 --max-time 30 "$mirror" -o src.tar.gz 2>/dev/null)
+    if [ "$http_code" = "200" ] && [ -s src.tar.gz ] && gzip -t src.tar.gz 2>/dev/null; then
+        echo "  OK! Downloaded successfully (HTTP $http_code)"
+        download_ok=1
+        break
+    fi
+    echo "  Failed (HTTP ${http_code:-000}), trying next..."
+done
+
+if [ $download_ok -eq 0 ]; then
+    echo ""
+    echo "ERROR: All download mirrors failed!"
+    echo "Please manually download $FILE_NAME from one of:"
+    for mirror in "${MIRRORS[@]}"; do
+        echo "  $mirror"
+    done
+    echo "Then run:"
+    echo "  cd /opt/benben-install && tar xzf $FILE_NAME && cd benben-ai-1.0.0"
     exit 1
 fi
 
