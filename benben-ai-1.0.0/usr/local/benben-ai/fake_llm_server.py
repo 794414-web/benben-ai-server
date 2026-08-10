@@ -11,12 +11,133 @@ import json
 import os
 import re
 import time
+import hashlib
 from datetime import datetime
+from collections import OrderedDict
 
 HOST = "0.0.0.0"
 PORT = 9998
 LOG_DIR = "fake_llm_logs"
 os.makedirs(LOG_DIR, exist_ok=True)
+
+
+# ============================================================
+# 会话状态管理 - 避免重复执行命令
+# ============================================================
+
+class SessionState:
+    """管理用户会话状态，防止命令重复执行"""
+    
+    def __init__(self, max_sessions=100):
+        self._sessions = OrderedDict()
+        self._max_sessions = max_sessions
+        self._confirm_keywords = {
+            "打开", "开", "好的", "好", "确认", "执行", "是", "对",
+            "可以", "行", "没问题", "没错", "就这个", "确定",
+            "打开它", "开它", "执行吧", "就这样",
+        }
+        self._cancel_keywords = {
+            "取消", "不用", "算了", "不要", "关掉", "停止", "取消吧",
+        }
+    
+    def _get_session_id(self, request_body):
+        """从请求中提取会话ID"""
+        # 尝试从Authorization或user字段获取
+        auth = request_body.get("user", "")
+        if auth:
+            return f"user_{auth}"
+        
+        # 从messages中提取session标识
+        messages = request_body.get("messages", [])
+        for msg in messages:
+            if msg.get("role") == "system":
+                content = msg.get("content", "")
+                if isinstance(content, str):
+                    # 尝试提取session信息
+                    return f"session_{hashlib.md5(content.encode()).hexdigest()[:8]}"
+        
+        # 默认session
+        return "default_session"
+    
+    def record_command(self, request_body, tool_calls):
+        """记录最近的工具调用，用于后续确认"""
+        session_id = self._get_session_id(request_body)
+        self._sessions[session_id] = {
+            "timestamp": time.time(),
+            "tool_calls": tool_calls,
+            "confirmed": False,
+        }
+        # 限制会话数量
+        if len(self._sessions) > self._max_sessions:
+            self._sessions.popitem(last=False)
+    
+    def get_pending_command(self, request_body, user_text):
+        """
+        检查用户文本是否为确认回复
+        如果是，返回之前的工具调用
+        """
+        session_id = self._get_session_id(request_body)
+        session = self._sessions.get(session_id)
+        
+        if not session:
+            return None
+        
+        # 检查是否过期（30秒内有效）
+        if time.time() - session["timestamp"] > 30:
+            self._sessions.pop(session_id, None)
+            return None
+        
+        # 如果已确认，不再返回
+        if session["confirmed"]:
+            return None
+        
+        # 检查用户文本是否为确认关键词
+        text = user_text.strip()
+        if text in self._confirm_keywords:
+            session["confirmed"] = True
+            return session["tool_calls"]
+        
+        # 检查是否为取消关键词
+        if text in self._cancel_keywords:
+            self._sessions.pop(session_id, None)
+            return "cancelled"
+        
+        return None
+    
+    def is_duplicate_command(self, request_body, user_text, tool_calls):
+        """
+        检查是否为重复的相同命令
+        避免在会话中重复执行相同的工具调用
+        """
+        session_id = self._get_session_id(request_body)
+        session = self._sessions.get(session_id)
+        
+        if not session or not tool_calls:
+            return False
+        
+        # 比较工具调用内容是否相同
+        import json as json_mod
+        new_calls_json = json_mod.dumps(
+            [{"name": tc["function"]["name"], "args": tc["function"]["arguments"]} 
+             for tc in tool_calls], 
+            sort_keys=True
+        )
+        
+        old_calls_json = json_mod.dumps(
+            [{"name": tc["function"]["name"], "args": tc["function"]["arguments"]} 
+             for tc in session["tool_calls"]],
+            sort_keys=True
+        )
+        
+        # 如果完全相同且在5秒内，视为重复
+        if new_calls_json == old_calls_json and time.time() - session["timestamp"] < 5:
+            return True
+        
+        return False
+
+
+# 全局会话状态管理器
+session_state = SessionState()
 
 
 def save_log(filename, data):
@@ -1111,8 +1232,64 @@ def build_response(request_body, is_stream=False):
                 user_text = content
             break
 
-    # 处理请求 - 新格式
-    result = process_request(user_text, available_tool_names)
+    # 检查是否为确认回复（会话状态管理）
+    pending_result = session_state.get_pending_command(request_body, user_text)
+    if pending_result == "cancelled":
+        # 用户取消了之前的命令
+        match_detail = {
+            "input_text": user_text,
+            "matched": True,
+            "matcher_name": "会话管理",
+            "match_result": "text",
+            "tool_calls": [],
+            "fallback_text": "已取消",
+            "fallback_reason": "用户取消操作",
+        }
+        result = {
+            "tool_calls": None,
+            "fallback_text": "好的，已取消。",
+            "match_detail": match_detail,
+        }
+    elif pending_result is not None:
+        # 用户确认执行之前的命令
+        match_detail = {
+            "input_text": user_text,
+            "matched": True,
+            "matcher_name": "会话管理",
+            "match_result": "tool_calls",
+            "tool_calls": [{"name": tc["function"]["name"], "args": tc["function"]["arguments"]} for tc in pending_result],
+            "fallback_text": None,
+            "fallback_reason": "用户确认执行",
+            "confirmed": True,
+        }
+        result = {
+            "tool_calls": pending_result,
+            "fallback_text": None,
+            "match_detail": match_detail,
+        }
+    else:
+        # 处理请求 - 新格式
+        result = process_request(user_text, available_tool_names)
+        tool_calls = result["tool_calls"]
+        fallback_text = result["fallback_text"]
+        match_detail = result["match_detail"]
+        
+        # 检查是否为重复命令
+        if tool_calls and session_state.is_duplicate_command(request_body, user_text, tool_calls):
+            # 是重复命令，返回已执行的提示
+            match_detail["matched"] = True
+            match_detail["match_result"] = "text"
+            match_detail["fallback_text"] = "命令已收到"
+            match_detail["is_duplicate"] = True
+            result = {
+                "tool_calls": None,
+                "fallback_text": "命令已收到",
+                "match_detail": match_detail,
+            }
+        elif tool_calls:
+            # 记录新的工具调用到会话状态
+            session_state.record_command(request_body, tool_calls)
+
     tool_calls = result["tool_calls"]
     fallback_text = result["fallback_text"]
     match_detail = result["match_detail"]
