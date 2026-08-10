@@ -135,6 +135,16 @@ def match_light(user_text, available_tool_names):
     """匹配灯光相关指令"""
     tool_calls = []
 
+    # 大灯开关 (打开/关闭大灯、车灯、前大灯)
+    if re.search(r"(大灯|车灯|前大灯)", user_text) and not re.search(r"(自动|雾灯|阅读灯|氛围灯|室内灯)", user_text):
+        enabled = not re.search(r"(关闭|关掉|关|灭|熄灭|取消|禁用)", user_text)
+        if "set_light_state" in available_tool_names:
+            tool_calls.append(make_tool_call(
+                "set_light_state",
+                {"enabled": enabled, "type": "headlight"}
+            ))
+            return tool_calls
+
     # 自动大灯
     if re.search(r"(自动大灯|自动灯)", user_text):
         enabled = not re.search(r"(关闭|关掉|关|取消|禁用)", user_text)
@@ -156,19 +166,24 @@ def match_light(user_text, available_tool_names):
             return tool_calls
 
     # 阅读灯
-    reading_patterns = [
-        (["关闭阅读灯", "阅读灯关", "阅读灯关闭"], "off"),
-        (["开门亮灯", "开门点亮", "开门灯"], "door"),
-        (["阅读灯自动", "自动阅读灯"], "auto"),
-    ]
-    for keywords, mode in reading_patterns:
-        for kw in keywords:
-            if kw in user_text and "set_reading_light" in available_tool_names:
-                tool_calls.append(make_tool_call(
-                    "set_reading_light",
-                    {"mode": mode}
-                ))
-                return tool_calls
+    if re.search(r"阅读灯", user_text):
+        if re.search(r"(打开|开|点亮|亮起)", user_text):
+            mode = "on"
+        elif re.search(r"(关闭|关|灭掉|熄灭)", user_text):
+            mode = "off"
+        elif re.search(r"(开门|门灯)", user_text):
+            mode = "door"
+        elif re.search(r"自动", user_text):
+            mode = "auto"
+        else:
+            mode = "on"  # 默认打开
+        
+        if "set_reading_light" in available_tool_names:
+            tool_calls.append(make_tool_call(
+                "set_reading_light",
+                {"mode": mode}
+            ))
+            return tool_calls
 
     return tool_calls
 
@@ -1512,7 +1527,25 @@ async def lifespan(app: FastAPI):
     users = load_users()
     print(f"[启动] 当前用户数: {len(users)}")
     if len(users) == 0:
-        print(f"[提示] 首次使用请登录管理面板创建用户")
+        # 自动创建默认用户
+        default_token = "benben_default_token_123456"
+        default_user = {
+            "name": "默认用户",
+            "token_hash": _hash_token(default_token),
+            "created_at": datetime.now().isoformat(),
+            "last_used_at": None,
+            "call_count": 0,
+            "today_calls": 0,
+            "today_date": "",
+            "enabled": True,
+            "remark": "系统自动创建的默认用户",
+        }
+        users["default"] = default_user
+        save_users(users)
+        print(f"[提示] 已自动创建默认用户")
+        print(f"[提示] 默认 Token: {default_token}")
+        print(f"[提示] 请在奔奔助手配置中使用此 Token")
+        print(f"[提示] 或登录管理面板创建新用户")
         print(f"[提示] 默认管理员密码: {DEFAULT_ADMIN_PASSWORD}")
     yield
     print(f"\n[关闭] 服务已停止")
@@ -1601,16 +1634,45 @@ async def chat_completions(
                 save_log(resp_filename, json.loads(response_body))
             except Exception:
                 save_log(resp_filename, {"raw": response_body[:3000]})
-
-        # 记录用户日志（用于管理面板展示）- 包含详细匹配信息
-        if not is_stream:
-            try:
-                response_obj = json.loads(response_body)
-                log_user_request(user_id, user_name, body, response_obj, match_detail)
-            except Exception:
-                pass
     except Exception:
         pass
+
+    # 记录用户日志（用于管理面板展示）- 无论流式还是非流式都记录
+    try:
+        if is_stream:
+            # 流式响应：从响应体解析最后的完整数据
+            try:
+                # 尝试从流式响应中提取最后一个完整的 JSON
+                lines = response_body.strip().split('\n')
+                last_data = None
+                for line in lines:
+                    if line.startswith('data: ') and line.strip() != 'data: [DONE]':
+                        data_str = line[6:].strip()
+                        if data_str:
+                            last_data = json.loads(data_str)
+                
+                # 用最后一个数据块构建一个简化的响应对象
+                if last_data and "choices" in last_data:
+                    log_user_request(user_id, user_name, body, last_data, match_detail)
+                else:
+                    # 如果无法解析，创建一个占位响应
+                    placeholder = {
+                        "choices": [{
+                            "message": {
+                                "content": match_detail.get("fallback_reason", "") or "流式响应",
+                                "tool_calls": match_detail.get("tool_calls", [])
+                            },
+                            "finish_reason": "stop"
+                        }]
+                    }
+                    log_user_request(user_id, user_name, body, placeholder, match_detail)
+            except Exception as e:
+                print(f"[日志] 流式响应日志记录异常: {e}")
+        else:
+            response_obj = json.loads(response_body)
+            log_user_request(user_id, user_name, body, response_obj, match_detail)
+    except Exception as e:
+        print(f"[日志] 用户日志记录异常: {e}")
 
     if is_stream:
         def sse_generator():

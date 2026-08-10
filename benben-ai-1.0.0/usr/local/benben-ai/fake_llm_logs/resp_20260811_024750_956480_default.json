@@ -1,0 +1,4 @@
+{
+  "stream": true,
+  "raw": "data: {\"id\": \"chatcmpl-1786387670\", \"choices\": [{\"index\": 0, \"delta\": {\"role\": \"assistant\", \"content\": \"\"}, \"finish_reason\": null}], \"created\": 1786387670, \"model\": \"fake-model\", \"object\": \"chat.completion.chunk\"}\n\ndata: {\"id\": \"chatcmpl-1786387670\", \"choices\": [{\"index\": 0, \"delta\": {\"role\": \"assistant\", \"content\": null, \"tool_calls\": [{\"index\": 0, \"id\": \"call_1786387670957\", \"type\": \"function\", \"function\": {\"name\": \"set_climate_power\", \"arguments\": \"{\\\"enabled\\\": false}\"}}]}, \"finish_reason\": null}], \"created\": 1786387670, \"model\": \"fake-model\", \"object\": \"chat.completion.chunk\"}\n\ndata: {\"id\": \"chatcmpl-1786387670\", \"choices\": [{\"index\": 0, \"delta\": {}, \"finish_reason\": \"tool_calls\"}], \"created\": 1786387670, \"model\": \"fake-model\", \"object\": \"chat.completion.chunk\"}\n\ndata: [DONE]\n\n"
+}

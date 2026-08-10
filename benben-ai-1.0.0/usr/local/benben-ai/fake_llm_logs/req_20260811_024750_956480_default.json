@@ -1,0 +1,17 @@
+{
+  "timestamp": "2026-08-11T02:47:50.956480",
+  "user_id": "default",
+  "user_name": "默认用户",
+  "method": "POST",
+  "path": "/v1/chat/completions",
+  "body": {
+    "model": "fake-model",
+    "messages": [
+      {
+        "role": "user",
+        "content": "关闭空调"
+      }
+    ],
+    "stream": true
+  }
+}

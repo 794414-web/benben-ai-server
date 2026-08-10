@@ -1,0 +1,17 @@
+{
+  "timestamp": "2026-08-11T02:47:51.079218",
+  "user_id": "default",
+  "user_name": "默认用户",
+  "method": "POST",
+  "path": "/v1/chat/completions",
+  "body": {
+    "model": "fake-model",
+    "messages": [
+      {
+        "role": "user",
+        "content": "今天天气怎么样"
+      }
+    ],
+    "stream": true
+  }
+}
