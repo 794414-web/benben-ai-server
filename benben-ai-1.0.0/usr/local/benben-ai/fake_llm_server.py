@@ -821,9 +821,30 @@ def process_request(user_text, available_tool_names):
     """
     text = user_text.strip()
 
-    # 特殊处理: 连接测试请求（APP的"测试对话"按钮）
-    # 测试请求通常是"请只回复：连接成功"或类似格式，且没有tools定义
+    # 如果没有 tools 定义，假设所有工具都可用（兼容不发送 tools 的客户端）
     if not available_tool_names:
+        available_tool_names = {
+            "set_climate_power", "set_climate_auto", "control_climate_temperature",
+            "set_light_state", "set_auto_headlight", "set_rear_fog_lamp", "set_reading_light",
+            "set_window_state", "set_sunroof_state", "set_roof_state",
+            "control_vehicle", "set_vehicle_power",
+            "set_seat_position", "set_seat_heating", "set_seat_ventilation",
+            "set_display_brightness", "set_media_volume", "set_media_mute",
+            "control_vehicle_volume",
+            "search_navigation_destination", "search_navigation_nearby",
+            "start_navigation", "control_navigation",
+            "select_result_item", "change_page",
+            "read_status", "control_media",
+            "get_driving_status", "get_door_status", "get_window_status",
+            "get_sunroof_status", "get_sunshade_status", "get_lock_status",
+            "get_mirror_status", "get_seat_status",
+        }
+        no_tools_definition = True
+    else:
+        no_tools_definition = False
+
+    # 特殊处理: 连接测试请求
+    if no_tools_definition:
         if "连接成功" in text or "请只回复" in text:
             return None, "连接成功"
         if "你好" in text or "在吗" in text:
