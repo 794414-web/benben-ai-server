@@ -21,7 +21,7 @@ yum install -y python3 python3-pip tar gzip
 
 echo "[2/4] Downloading..."
 REPO_URL="https://raw.githubusercontent.com/794414-web/benben-ai-server/main"
-GITEE_URL="https://gitee.com/794414-web/benben-ai-server/raw/main"
+GITEE_URL="https://gitee.com/ken794414/benben-ai-server/raw/main"
 cd /opt
 rm -rf benben-install
 mkdir benben-install
