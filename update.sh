@@ -44,24 +44,56 @@ echo "[2/3] Updating files..."
 tar xzf src.tar.gz
 cd benben-ai-1.0.0
 
+# 检测实际 Python 路径
+PYTHON_BIN=""
+if [ -x /usr/local/bin/python3.9 ]; then
+    PYTHON_BIN="/usr/local/bin/python3.9"
+elif [ -x /opt/benben-conda/bin/python3.11 ]; then
+    PYTHON_BIN="/usr/local/bin/python3.9"
+elif [ -x /opt/rh/rh-python39/root/usr/bin/python3 ]; then
+    PYTHON_BIN="/usr/local/bin/python3.9"
+else
+    echo "WARNING: Python 3.9 not found at /usr/local/bin/python3.9"
+    # 尝试找到 Python
+    PYTHON_BIN=$(which python3.9 2>/dev/null || echo "")
+    if [ -z "$PYTHON_BIN" ]; then
+        PYTHON_BIN=$(which python3 2>/dev/null || echo "")
+    fi
+fi
+
+echo "Using Python: $PYTHON_BIN"
+
 # 保留用户数据（config.json 和 users.json 在 /usr/local/benben-ai/ 下）
 # 只更新代码文件
 cp -f usr/local/benben-ai/fake_llm_server.py /usr/local/benben-ai/
 cp -f etc/systemd/benben-ai.service /etc/systemd/system/
 
+# 用实际 Python 路径替换 service 文件中的占位符
+if [ -n "$PYTHON_BIN" ] && [ -x "$PYTHON_BIN" ]; then
+    sed -i "s|__PYTHON_BIN__|$PYTHON_BIN|g" /etc/systemd/system/benben-ai.service
+    echo "Service file updated with Python path"
+fi
+
 # 确保 Python 依赖是最新的
-PYTHON_BIN="/usr/local/bin/python3.9"
-if [ -x "$PYTHON_BIN" ]; then
+if [ -n "$PYTHON_BIN" ] && [ -x "$PYTHON_BIN" ]; then
     cd /usr/local/benben-ai
     $PYTHON_BIN -m pip install --upgrade pip --quiet 2>/dev/null || true
     $PYTHON_BIN -m pip install -r requirements.txt --quiet 2>/dev/null || true
     echo "Dependencies updated"
+else
+    echo "WARNING: Skipping dependency update (Python not found)"
 fi
 
 echo "[3/3] Restarting service..."
 systemctl daemon-reload
-systemctl restart benben-ai
-sleep 2
+
+# 先尝试停止旧服务
+systemctl stop benben-ai 2>/dev/null || true
+sleep 1
+
+# 启动服务
+systemctl start benben-ai
+sleep 3
 
 if systemctl is-active --quiet benben-ai; then
     echo "Service restarted successfully!"
