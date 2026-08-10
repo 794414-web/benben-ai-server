@@ -107,8 +107,14 @@ if systemctl is-active --quiet benben-ai; then
     echo "Service started successfully!"
 else
     echo ""
-    echo "WARNING: Service may have failed to start. Check logs:"
-    echo "  journalctl -u benben-ai -n 30"
+    echo "========== ERROR LOGS =========="
+    journalctl -u benben-ai -n 20 --no-pager 2>/dev/null
+    echo "================================="
+    echo ""
+    echo "Trying to run manually for more info..."
+    cd /usr/local/benben-ai
+    timeout 3 python3 fake_llm_server.py 2>&1 || true
+    echo ""
 fi
 
 rm -rf /opt/benben-install
