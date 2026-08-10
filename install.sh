@@ -41,7 +41,10 @@ fi
 
 echo "[3/4] Extracting and installing..."
 tar xzf src.tar.gz
-cd benben-ai-1.0.0
+
+if [ -d "benben-ai-1.0.0" ]; then
+    cd benben-ai-1.0.0
+fi
 
 mkdir -p /usr/local/benben-ai
 mkdir -p /etc/benben-ai
