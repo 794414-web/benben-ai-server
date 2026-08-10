@@ -817,11 +817,24 @@ def match_change_page(user_text, available_tool_names):
 def process_request(user_text, available_tool_names):
     """
     根据用户文本匹配工具调用
-    返回: (tool_calls, fallback_text)
+    返回: {
+        "tool_calls": list or None,
+        "fallback_text": str or None,
+        "match_detail": dict  # 匹配详情
+    }
     """
     text = user_text.strip()
+    match_detail = {
+        "input_text": text,
+        "matched": False,
+        "matcher_used": None,
+        "matcher_name": None,
+        "tool_calls": [],
+        "fallback_reason": None,
+        "available_tools_count": 0,
+    }
 
-    # 如果没有 tools 定义，假设所有工具都可用（兼容不发送 tools 的客户端）
+    # 如果没有 tools 定义，假设所有工具都可用
     if not available_tool_names:
         available_tool_names = {
             "set_climate_power", "set_climate_auto", "control_climate_temperature",
@@ -839,40 +852,80 @@ def process_request(user_text, available_tool_names):
             "get_sunroof_status", "get_sunshade_status", "get_lock_status",
             "get_mirror_status", "get_seat_status",
         }
-        no_tools_definition = True
-    else:
-        no_tools_definition = False
+        match_detail["fallback_reason"] = "客户端未发送 tools 定义，已启用全部工具"
+    
+    match_detail["available_tools_count"] = len(available_tool_names)
 
     # 特殊处理: 连接测试请求
-    if no_tools_definition:
+    if not available_tool_names or match_detail.get("fallback_reason"):
         if "连接成功" in text or "请只回复" in text:
-            return None, "连接成功"
+            match_detail["matched"] = True
+            match_detail["matcher_name"] = "connection_test"
+            match_detail["matcher_used"] = "连接测试匹配"
+            return {
+                "tool_calls": None,
+                "fallback_text": "连接成功",
+                "match_detail": match_detail,
+            }
         if "你好" in text or "在吗" in text:
-            return None, "你好，我是奔奔，有什么可以帮你的？"
+            match_detail["matched"] = True
+            match_detail["matcher_name"] = "greeting"
+            match_detail["matcher_used"] = "问候匹配"
+            return {
+                "tool_calls": None,
+                "fallback_text": "你好，我是奔奔，有什么可以帮你的？",
+                "match_detail": match_detail,
+            }
 
     # 按优先级匹配各类规则
     matchers = [
-        match_end_conversation,
-        match_navigation,
-        match_select_result,
-        match_change_page,
-        match_status_read,
-        match_light,
-        match_climate,
-        match_window,
-        match_vehicle_control,
-        match_seat,
-        match_display,
-        match_volume,
-        match_media,
+        ("对话结束", match_end_conversation),
+        ("导航", match_navigation),
+        ("结果选择", match_select_result),
+        ("翻页", match_change_page),
+        ("状态读取", match_status_read),
+        ("灯光", match_light),
+        ("空调", match_climate),
+        ("车窗", match_window),
+        ("车辆控制", match_vehicle_control),
+        ("座椅", match_seat),
+        ("显示", match_display),
+        ("音量", match_volume),
+        ("媒体", match_media),
     ]
 
-    for matcher in matchers:
+    for name, matcher in matchers:
         result = matcher(text, available_tool_names)
         if result:
-            return result, None
+            match_detail["matched"] = True
+            match_detail["matcher_name"] = name
+            match_detail["matcher_used"] = f"{name} 匹配器"
+            if isinstance(result, list):
+                match_detail["tool_calls"] = [
+                    {"name": tc["function"]["name"], "arguments": tc["function"]["arguments"]}
+                    for tc in result
+                ]
+                match_detail["match_result"] = "tool_calls"
+                return {
+                    "tool_calls": result,
+                    "fallback_text": None,
+                    "match_detail": match_detail,
+                }
+            else:
+                match_detail["fallback_text"] = result
+                match_detail["match_result"] = "text"
+                return {
+                    "tool_calls": None,
+                    "fallback_text": result,
+                    "match_detail": match_detail,
+                }
 
     # 没有匹配到工具调用，返回普通文本回复
+    match_detail["matched"] = False
+    match_detail["match_result"] = "fallback"
+    match_detail["fallback_reason"] = "未匹配到任何命令规则"
+    match_detail["tried_matchers"] = [name for name, _ in matchers]
+    
     fallback_texts = [
         "好的，我在听。",
         "明白了。",
@@ -881,11 +934,17 @@ def process_request(user_text, available_tool_names):
         "可以，你继续说。",
     ]
     import random
-    return None, random.choice(fallback_texts)
+    return {
+        "tool_calls": None,
+        "fallback_text": random.choice(fallback_texts),
+        "match_detail": match_detail,
+    }
 
 
 def build_response(request_body, is_stream=False):
-    """构建响应（支持stream和非stream两种格式）"""
+    """构建响应（支持stream和非stream两种格式）
+    返回: {"response_body": str, "match_detail": dict}
+    """
     model = request_body.get("model", "fake-model")
     messages = request_body.get("messages", [])
     tools = request_body.get("tools", [])
@@ -909,8 +968,11 @@ def build_response(request_body, is_stream=False):
                 user_text = content
             break
 
-    # 处理请求
-    tool_calls, fallback_text = process_request(user_text, available_tool_names)
+    # 处理请求 - 新格式
+    result = process_request(user_text, available_tool_names)
+    tool_calls = result["tool_calls"]
+    fallback_text = result["fallback_text"]
+    match_detail = result["match_detail"]
 
     created = int(time.time())
 
@@ -1058,9 +1120,11 @@ def build_response(request_body, is_stream=False):
             chunks.append(json.dumps(chunk_end, ensure_ascii=False))
             chunks.append("[DONE]")
 
-        return "data: " + "\n\ndata: ".join(chunks) + "\n\n"
+        response_body = "data: " + "\n\ndata: ".join(chunks) + "\n\n"
     else:
-        return json.dumps(response_obj, ensure_ascii=False)
+        response_body = json.dumps(response_obj, ensure_ascii=False)
+    
+    return {"response_body": response_body, "match_detail": match_detail}
 # ============================================================
 # 服务层：FastAPI + 多用户 Token 鉴权 + 管理面板（v2.0 多用户版）
 # ============================================================
@@ -1354,8 +1418,8 @@ def cleanup_sessions():
 # 日志记录（按用户分文件）
 # ============================================================
 
-def log_user_request(user_id: str, user_name: str, request_data: dict, response_data: dict | str):
-    """记录用户请求（按用户分文件夹）"""
+def log_user_request(user_id: str, user_name: str, request_data: dict, response_data: dict | str, match_detail: dict | None = None):
+    """记录用户请求（按用户分文件夹），包含详细匹配信息"""
     user_log_dir = USAGE_DIR / user_id
     user_log_dir.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
@@ -1395,6 +1459,7 @@ def log_user_request(user_id: str, user_name: str, request_data: dict, response_
                 }
             response_summary["finish_reason"] = ch.get("finish_reason", "")
 
+    # 构建日志条目 - 包含详细匹配信息
     log_entry = {
         "timestamp": datetime.now().isoformat(timespec="seconds"),
         "user_id": user_id,
@@ -1402,6 +1467,29 @@ def log_user_request(user_id: str, user_name: str, request_data: dict, response_
         "user_text": user_text,
         "response": response_summary,
     }
+
+    # 添加匹配详情
+    if match_detail:
+        log_entry["match_detail"] = match_detail
+        
+        # 生成可读的状态描述
+        if match_detail.get("matched"):
+            matcher_name = match_detail.get("matcher_name", "未知")
+            log_entry["status_text"] = f"✅ 已识别 - 使用「{matcher_name}」匹配器"
+            if match_detail.get("tool_calls"):
+                tools_info = ", ".join([tc.get("name", "") for tc in match_detail.get("tool_calls", [])])
+                log_entry["detail_text"] = f"📦 工具调用: {tools_info}"
+        else:
+            log_entry["status_text"] = "❌ 未识别"
+            fallback_reason = match_detail.get("fallback_reason", "")
+            if fallback_reason:
+                log_entry["detail_text"] = f"📝 原因: {fallback_reason}"
+            if match_detail.get("tried_matchers"):
+                log_entry["detail_text"] = log_entry.get("detail_text", "") + f" | 尝试过: {', '.join(match_detail['tried_matchers'])}"
+            
+            # 添加可用工具数量信息
+            available_count = match_detail.get("available_tools_count", 0)
+            log_entry["detail_text"] = log_entry.get("detail_text", "") + f" | 可用工具数: {available_count}"
 
     # 写入当日日志（JSON Lines 追加）
     today = datetime.now().strftime("%Y%m%d")
@@ -1499,7 +1587,9 @@ async def chat_completions(
         pass
 
     # 构建响应（复用 build_response 函数）
-    response_body = build_response(body, is_stream)
+    build_result = build_response(body, is_stream)
+    response_body = build_result["response_body"]
+    match_detail = build_result.get("match_detail")
 
     # 保存响应日志
     try:
@@ -1512,10 +1602,11 @@ async def chat_completions(
             except Exception:
                 save_log(resp_filename, {"raw": response_body[:3000]})
 
-        # 记录用户日志（用于管理面板展示）
+        # 记录用户日志（用于管理面板展示）- 包含详细匹配信息
         if not is_stream:
             try:
-                log_user_request(user_id, user_name, body, json.loads(response_body))
+                response_obj = json.loads(response_body)
+                log_user_request(user_id, user_name, body, response_obj, match_detail)
             except Exception:
                 pass
     except Exception:
@@ -1749,6 +1840,49 @@ async def user_logs(
         "data": entries[:500],  # 最多返回500条
         "available_dates": available_dates,
     }
+
+
+@app.post("/api/admin/test-command")
+async def test_command(req: ChatCompletionRequest, is_admin: bool = Depends(require_admin)):
+    """测试命令匹配 - 直接返回匹配详情，不记录日志"""
+    try:
+        body = req.model_dump()
+        user_text = ""
+        messages = body.get("messages", [])
+        for msg in reversed(messages):
+            if msg.get("role") == "user":
+                content = msg.get("content", "")
+                if isinstance(content, list):
+                    for part in content:
+                        if isinstance(part, dict) and part.get("type") == "text":
+                            user_text += part.get("text", "")
+                elif isinstance(content, str):
+                    user_text = content
+                break
+        
+        # 提取可用工具
+        tools = body.get("tools", [])
+        available_tool_names = set()
+        for tool in tools:
+            func = tool.get("function", {})
+            name = func.get("name")
+            if name:
+                available_tool_names.add(name)
+        
+        # 调用 process_request
+        result = process_request(user_text, available_tool_names)
+        
+        return {
+            "success": True,
+            "data": {
+                "user_text": user_text,
+                "match_detail": result["match_detail"],
+                "tool_calls": result["tool_calls"],
+                "fallback_text": result["fallback_text"],
+            }
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"测试失败: {e}")
 
 
 @app.get("/api/service/restart")
@@ -2019,6 +2153,8 @@ ADMIN_HTML = r'''
     border-radius: 0 6px 6px 0;
   }
   .log-entry.tool { border-left-color: #9f7aea; }
+  .log-entry.unmatched { border-left-color: #f56565; }
+  .log-entry.matched { border-left-color: #48bb78; }
   .log-entry .meta { font-size: 11px; color: #718096; margin-bottom: 6px; }
   .log-entry .user-text { font-size: 14px; color: #2d3748; font-weight: 500; margin-bottom: 6px; }
   .log-entry .resp {
@@ -2028,6 +2164,51 @@ ADMIN_HTML = r'''
     font-size: 12px;
     color: #4a5568;
     font-family: Consolas, monospace;
+  }
+  .log-entry .status-badge {
+    display: inline-block;
+    padding: 3px 10px;
+    border-radius: 12px;
+    font-size: 12px;
+    font-weight: 600;
+    margin-right: 8px;
+  }
+  .status-matched { background: #c6f6d5; color: #22543d; }
+  .status-unmatched { background: #fed7d7; color: #742a2a; }
+  .log-detail {
+    margin-top: 8px;
+    padding: 8px 12px;
+    background: #ebf8ff;
+    border-radius: 4px;
+    font-size: 12px;
+    color: #2c5282;
+    border: 1px solid #bee3f8;
+  }
+  .log-detail.unmatched {
+    background: #fff5f5;
+    color: #742a2a;
+    border-color: #fed7d7;
+  }
+  .log-detail .detail-title {
+    font-weight: 600;
+    margin-bottom: 4px;
+  }
+  .log-detail .detail-row {
+    margin: 3px 0;
+    line-height: 1.6;
+  }
+  .log-detail .detail-label {
+    color: #4a5568;
+    font-weight: 500;
+  }
+  .tool-tag {
+    display: inline-block;
+    background: #9f7aea;
+    color: white;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    margin: 2px;
   }
   .date-select {
     padding: 6px 12px;
@@ -2147,6 +2328,7 @@ ADMIN_HTML = r'''
   <!-- 标签页 -->
   <div class="tabs">
     <div class="tab active" data-tab="users" onclick="switchTab('users')">👥 用户管理</div>
+    <div class="tab" data-tab="test" onclick="switchTab('test')">🧪 命令测试</div>
     <div class="tab" data-tab="docs" onclick="switchTab('docs')">📖 使用说明</div>
     <div class="tab" data-tab="logs" onclick="switchTab('logs')">📜 调用日志</div>
   </div>
@@ -2180,6 +2362,39 @@ ADMIN_HTML = r'''
             <tr><td colspan="8" style="text-align:center;color:#718096;padding:40px;">加载中...</td></tr>
           </tbody>
         </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- 命令测试 -->
+  <div id="tab-test" class="tab-content">
+    <div class="panel">
+      <h3>🧪 命令测试工具</h3>
+      <p style="margin-bottom:16px;font-size:13px;color:#718096;">
+        输入命令文本，测试系统是否能正确识别和匹配工具调用。可以选择模拟客户端发送的工具列表。
+      </p>
+      
+      <div style="margin-bottom:16px;">
+        <label style="display:block;margin-bottom:6px;font-size:13px;font-weight:500;">命令文本 *</label>
+        <textarea id="testInput" rows="3" placeholder="输入要测试的命令，如：打开空调、温度调到24度、去杭州西湖..." style="width:100%;padding:10px 14px;border:1px solid #cbd5e0;border-radius:6px;font-size:14px;outline:none;resize:vertical;"></textarea>
+      </div>
+      
+      <div style="margin-bottom:16px;">
+        <label style="display:block;margin-bottom:6px;font-size:13px;font-weight:500;">模拟工具列表（可选，留空表示启用全部工具）</label>
+        <textarea id="testTools" rows="3" placeholder="格式：每行一个工具名，如：&#10;set_climate_power&#10;control_climate_temperature" style="width:100%;padding:10px 14px;border:1px solid #cbd5e0;border-radius:6px;font-size:13px;outline:none;resize:vertical;font-family:Consolas,monospace;"></textarea>
+        <div style="margin-top:6px;font-size:12px;color:#718096;">💡 留空则自动启用所有工具（模拟真实客户端未发送 tools 的情况）</div>
+      </div>
+      
+      <div style="display:flex;gap:10px;">
+        <button class="btn btn-primary" onclick="runTest()">🚀 测试命令</button>
+        <button class="btn btn-gray" onclick="clearTest()">🗑 清空结果</button>
+      </div>
+    </div>
+    
+    <div id="testResult" style="display:none;">
+      <div class="panel">
+        <h3>📊 测试结果</h3>
+        <div id="testResultContent"></div>
       </div>
     </div>
   </div>
@@ -2537,21 +2752,185 @@ async function loadLogs() {
     }
     list.innerHTML = entries.map(e => {
       const r = e.response || {};
+      const md = e.match_detail || {};
       let respHtml = '';
       if (r.type === 'tool_calls') {
         respHtml = `<span class="tag tag-blue">🛠 工具调用</span> <strong>${escapeHtml(r.tool)}</strong> 参数: <code>${escapeHtml(r.arguments)}</code>`;
       } else {
         respHtml = `<span class="tag tag-green">💬 文本回复</span> ${escapeHtml(r.content || '')}`;
       }
-      return `<div class="log-entry ${r.type==='tool_calls'?'tool':''}">
-        <div class="meta">${escapeHtml(e.timestamp)} · finish: ${escapeHtml(r.finish_reason||'')}</div>
-        <div class="user-text">👤 ${escapeHtml(e.user_text || '')}</div>
-        <div class="resp">🤖 ${respHtml}</div>
+      
+      // 构建详细匹配信息
+      let detailHtml = '';
+      if (Object.keys(md).length > 0) {
+        const isMatched = md.matched;
+        const detailClass = isMatched ? '' : ' unmatched';
+        let detailContent = '';
+        
+        if (isMatched) {
+          detailContent = `
+            <div class="detail-row"><span class="detail-label">匹配器:</span> ${escapeHtml(md.matcher_name || md.matcher_used || '未知')}</div>
+            <div class="detail-row"><span class="detail-label">结果:</span> ${escapeHtml(md.match_result || '已匹配')}</div>
+          `;
+          if (md.tool_calls && md.tool_calls.length > 0) {
+            detailContent += '<div class="detail-row"><span class="detail-label">工具调用:</span> ';
+            md.tool_calls.forEach(tc => {
+              detailContent += `<span class="tool-tag">${escapeHtml(tc.name || '')}</span>`;
+              if (tc.arguments) {
+                detailContent += `<br><span style="margin-left:20px;color:#718096;font-size:11px;">参数: ${escapeHtml(tc.arguments)}</span>`;
+              }
+            });
+            detailContent += '</div>';
+          }
+        } else {
+          detailContent = `
+            <div class="detail-row"><span class="detail-label">状态:</span> ❌ 未识别</div>
+          `;
+          if (md.fallback_reason) {
+            detailContent += `<div class="detail-row"><span class="detail-label">原因:</span> ${escapeHtml(md.fallback_reason)}</div>`;
+          }
+          if (md.tried_matchers && md.tried_matchers.length > 0) {
+            detailContent += `<div class="detail-row"><span class="detail-label">尝试过的匹配器:</span> ${escapeHtml(md.tried_matchers.join(', '))}</div>`;
+          }
+          if (md.available_tools_count !== undefined) {
+            detailContent += `<div class="detail-row"><span class="detail-label">可用工具数:</span> ${md.available_tools_count}</div>`;
+          }
+        }
+        
+        detailHtml = `
+          <div class="log-detail${detailClass}">
+            <div class="detail-title">📊 匹配详情</div>
+            ${detailContent}
+          </div>
+        `;
+      }
+      
+      // 状态徽章
+      const statusBadge = e.status_text ? `<span class="status-badge ${md.matched ? 'status-matched' : 'status-unmatched'}">${escapeHtml(e.status_text)}</span>` : '';
+      
+      // 确定日志条目样式类
+      const entryClass = md.matched ? 'matched' : (md.matched === false ? 'unmatched' : (r.type==='tool_calls' ? 'tool' : ''));
+      
+      return `<div class="log-entry ${entryClass}">
+        <div class="meta">
+          ${escapeHtml(e.timestamp)} · 
+          ${statusBadge}
+          finish: ${escapeHtml(r.finish_reason||'')}
+        </div>
+        <div class="user-text">👤 <span style="color:#718096;font-size:12px;">发送:</span> ${escapeHtml(e.user_text || '')}</div>
+        <div class="resp">🤖 <span style="color:#718096;font-size:11px;">返回:</span> ${respHtml}</div>
+        ${detailHtml}
       </div>`;
     }).join('');
   } catch(e) {
     list.innerHTML = '<p style="color:#e53e3e;text-align:center;padding:20px;">加载失败: ' + e.message + '</p>';
   }
+}
+
+// ---- 命令测试 ----
+async function runTest() {
+  const input = document.getElementById('testInput').value.trim();
+  const toolsText = document.getElementById('testTools').value.trim();
+  
+  if (!input) {
+    showToast('请输入要测试的命令', 'error');
+    return;
+  }
+  
+  // 构建请求体
+  const requestBody = {
+    model: 'fake-model',
+    messages: [{ role: 'user', content: input }],
+    stream: false
+  };
+  
+  // 如果有指定工具列表
+  if (toolsText) {
+    const toolNames = toolsText.split('\\n').map(t => t.trim()).filter(t => t);
+    requestBody.tools = toolNames.map(name => ({ function: { name: name } }));
+  }
+  
+  const resultDiv = document.getElementById('testResult');
+  const contentDiv = document.getElementById('testResultContent');
+  resultDiv.style.display = 'block';
+  contentDiv.innerHTML = '<p style="color:#718096;text-align:center;padding:20px;">测试中...</p>';
+  
+  try {
+    const data = await api('POST', '/api/admin/test-command', requestBody);
+    const result = data.data;
+    const md = result.match_detail || {};
+    
+    let html = '';
+    
+    // 状态指示
+    if (md.matched) {
+      html += '<div style="background:#c6f6d5;color:#22543d;padding:10px 14px;border-radius:6px;margin-bottom:12px;font-weight:600;">';
+      html += '✅ 命令已识别';
+      if (md.matcher_name) html += ` - 使用「${escapeHtml(md.matcher_name)}」匹配器`;
+      html += '</div>';
+    } else {
+      html += '<div style="background:#fed7d7;color:#742a2a;padding:10px 14px;border-radius:6px;margin-bottom:12px;font-weight:600;">';
+      html += '❌ 命令未识别';
+      html += '</div>';
+    }
+    
+    // 输入输出展示
+    html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;">';
+    html += '<div style="background:#f7fafc;padding:12px;border-radius:6px;"><strong style="color:#4a5568;font-size:12px;">📥 输入命令</strong>';
+    html += `<div style="margin-top:6px;font-size:14px;color:#2d3748;">${escapeHtml(result.user_text)}</div></div>`;
+    
+    if (md.matched) {
+      html += '<div style="background:#ebf8ff;padding:12px;border-radius:6px;"><strong style="color:#2c5282;font-size:12px;">📤 识别结果</strong>';
+      if (result.tool_calls && result.tool_calls.length > 0) {
+        result.tool_calls.forEach(tc => {
+          html += `<div style="margin-top:6px;"><span class="tool-tag">${escapeHtml(tc.function.name)}</span></div>`;
+          html += `<div style="font-size:11px;color:#718096;margin-top:2px;">参数: ${escapeHtml(tc.function.arguments)}</div>`;
+        });
+      } else if (result.fallback_text) {
+        html += `<div style="margin-top:6px;font-size:13px;color:#4a5568;">${escapeHtml(result.fallback_text)}</div>`;
+      }
+      html += '</div>';
+    } else {
+      html += '<div style="background:#fff5f5;padding:12px;border-radius:6px;"><strong style="color:#742a2a;font-size:12px;">📤 返回内容</strong>';
+      html += `<div style="margin-top:6px;font-size:13px;color:#4a5568;">${escapeHtml(result.fallback_text || '无')}</div>`;
+      html += '</div>';
+    }
+    html += '</div>';
+    
+    // 详细匹配信息
+    html += '<div style="background:#f7fafc;padding:12px;border-radius:6px;">';
+    html += '<strong style="color:#4a5568;font-size:12px;">📊 匹配详情</strong>';
+    html += '<div style="margin-top:8px;font-size:13px;">';
+    html += `<div style="margin:4px 0;"><span style="color:#718096;">匹配状态:</span> ${md.matched ? '✅ 已匹配' : '❌ 未匹配'}</div>`;
+    
+    if (md.matcher_name) {
+      html += `<div style="margin:4px 0;"><span style="color:#718096;">匹配器:</span> ${escapeHtml(md.matcher_name)}</div>`;
+    }
+    if (md.match_result) {
+      html += `<div style="margin:4px 0;"><span style="color:#718096;">结果类型:</span> ${escapeHtml(md.match_result)}</div>`;
+    }
+    if (md.fallback_reason) {
+      html += `<div style="margin:4px 0;"><span style="color:#718096;">未匹配原因:</span> ${escapeHtml(md.fallback_reason)}</div>`;
+    }
+    if (md.available_tools_count !== undefined) {
+      html += `<div style="margin:4px 0;"><span style="color:#718096;">可用工具数:</span> ${md.available_tools_count}</div>`;
+    }
+    if (md.tried_matchers && md.tried_matchers.length > 0) {
+      html += `<div style="margin:4px 0;"><span style="color:#718096;">尝试过的匹配器:</span> ${escapeHtml(md.tried_matchers.join(', '))}</div>`;
+    }
+    html += '</div>';
+    html += '</div>';
+    
+    contentDiv.innerHTML = html;
+  } catch(e) {
+    contentDiv.innerHTML = `<div style="background:#fed7d7;color:#742a2a;padding:12px;border-radius:6px;">测试失败: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+function clearTest() {
+  document.getElementById('testInput').value = '';
+  document.getElementById('testTools').value = '';
+  document.getElementById('testResult').style.display = 'none';
 }
 
 // ---- 重启服务 ----
