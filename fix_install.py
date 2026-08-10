@@ -1,4 +1,12 @@
-#!/bin/bash
+#!/usr/bin/env python3
+"""Fix install.sh to use direct file copy method"""
+
+import os
+
+base = os.path.dirname(os.path.abspath(__file__))
+path = os.path.join(base, 'install.sh')
+
+content = '''#!/bin/bash
 # BenBen AI Assistant - One-Click Install
 # Direct installation (no RPM build required)
 set -e
@@ -64,3 +72,15 @@ echo "Commands:"
 echo "  systemctl status benben-ai"
 echo "  journalctl -u benben-ai -f"
 echo "  tail -f /var/log/benben-ai/service.log"
+'''
+
+with open(path, 'w', encoding='utf-8') as f:
+    f.write(content)
+
+# Verify
+with open(path, 'rb') as f:
+    data = f.read()
+crlf = data.count(b'\\r\\n')
+print(f'Fixed install.sh: {len(data)} bytes, CRLF={crlf}')
+assert crlf == 0, 'Still has CRLF!'
+print('OK - Pure LF line endings')
