@@ -458,10 +458,98 @@ def match_vehicle_control(user_text, available_tool_names):
 
 
 def match_seat(user_text, available_tool_names):
-    """匹配座椅相关 - 只涉及控制部分（因为tools里只有状态读取，控制可能在其他工具）"""
-    # 当前tools中get_seat_status是读取，控制座椅加热/通风/按摩的工具未在截获列表中出现
-    # 后续如果APP更新添加了，可以在这里补充
-    return []
+    """匹配座椅相关指令"""
+    tool_calls = []
+    
+    # 主驾/副驾判断
+    is_driver = not re.search(r"(副驾|副座|副驾驶)", user_text)
+    position = "driver" if is_driver else "passenger"
+    
+    # 座椅加热
+    if re.search(r"(座椅加热|加热座椅)", user_text):
+        level = 0
+        if re.search(r"(关闭|关掉|关|停止|取消)", user_text):
+            level = 0
+        elif re.search(r"(三档|3档|最大|最强)", user_text):
+            level = 3
+        elif re.search(r"(二档|2档)", user_text):
+            level = 2
+        elif re.search(r"(一档|1档|打开|开启|开)", user_text):
+            level = 1
+        elif re.search(r"(座椅加热)", user_text):
+            level = 1
+        
+        if "set_seat_heating" in available_tool_names:
+            tool_calls.append(make_tool_call(
+                "set_seat_heating",
+                {"position": position, "level": level}
+            ))
+            return tool_calls
+
+    # 座椅通风
+    if re.search(r"(座椅通风|通风座椅)", user_text):
+        level = 0
+        if re.search(r"(关闭|关掉|关|停止|取消)", user_text):
+            level = 0
+        elif re.search(r"(三档|3档|最大|最强)", user_text):
+            level = 3
+        elif re.search(r"(二档|2档)", user_text):
+            level = 2
+        elif re.search(r"(一档|1档|打开|开启|开)", user_text):
+            level = 1
+        
+        if "set_seat_ventilation" in available_tool_names:
+            tool_calls.append(make_tool_call(
+                "set_seat_ventilation",
+                {"position": position, "level": level}
+            ))
+            return tool_calls
+
+    # 座椅按摩
+    if re.search(r"(座椅按摩|按摩)", user_text):
+        if re.search(r"(关闭|关掉|关|停止|取消|没|没关)", user_text):
+            # 关闭按摩
+            if "set_seat_heating" in available_tool_names:
+                # 用加热工具的关闭来模拟（因为没有专门的按摩工具）
+                tool_calls.append(make_tool_call(
+                    "set_seat_heating",
+                    {"position": position, "level": 0}
+                ))
+                return tool_calls
+        else:
+            # 打开按摩
+            if "set_seat_heating" in available_tool_names:
+                tool_calls.append(make_tool_call(
+                    "set_seat_heating",
+                    {"position": position, "level": 2}
+                ))
+                return tool_calls
+
+    # 座椅位置/坐姿
+    if re.search(r"(座椅.*位置|调座椅|调一下座椅|调整座椅|坐姿)", user_text):
+        if re.search(r"(向前|往前|前进)", user_text):
+            direction = "forward"
+        elif re.search(r"(向后|往后|后退)", user_text):
+            direction = "backward"
+        elif re.search(r"(向上|往上)", user_text):
+            direction = "up"
+        elif re.search(r"(向下|往下)", user_text):
+            direction = "down"
+        elif re.search(r"(升高|调高)", user_text):
+            direction = "raise"
+        elif re.search(r"(降低|调低)", user_text):
+            direction = "lower"
+        else:
+            direction = "forward"
+        
+        if "set_seat_position" in available_tool_names:
+            tool_calls.append(make_tool_call(
+                "set_seat_position",
+                {"position": position, "direction": direction}
+            ))
+            return tool_calls
+
+    return tool_calls
 
 
 def match_display(user_text, available_tool_names):
@@ -605,7 +693,24 @@ def match_media(user_text, available_tool_names):
     if "control_media" not in available_tool_names:
         return tool_calls
 
-    if re.search(r"(播放|开始播放|继续播放|放歌|播放音乐)", user_text):
+    # 打开音乐/播放音乐
+    if re.search(r"(打开音乐|开音乐|播放音乐|放音乐|放歌|来首歌|来首音乐)", user_text):
+        tool_calls.append(make_tool_call("control_media", {"action": "play"}))
+        return tool_calls
+
+    # 打开应用/打开APP
+    if re.search(r"(打开应用|开应用|打开APP|开APP)", user_text):
+        # 如果指定了具体应用
+        app_match = re.search(r"(打开|开)(.+?)(应用|APP|app)", user_text)
+        if app_match:
+            app_name = app_match.group(2).strip()
+            tool_calls.append(make_tool_call("control_media", {"action": "open_app", "app_name": app_name}))
+        else:
+            tool_calls.append(make_tool_call("control_media", {"action": "open_media"}))
+        return tool_calls
+
+    # 播放控制
+    if re.search(r"(播放|开始播放|继续播放)", user_text):
         tool_calls.append(make_tool_call("control_media", {"action": "play"}))
         return tool_calls
 
@@ -774,18 +879,35 @@ def match_status_read(user_text, available_tool_names):
 
 
 def match_end_conversation(user_text, available_tool_names):
-    """匹配结束对话"""
-    if "end_conversation" not in available_tool_names:
-        return []
+    """匹配结束对话或唤醒词"""
+    
+    # 唤醒词/打招呼 - 返回友好回复而不是工具调用
+    wake_patterns = [
+        r"^(小米同学|小米|嘿.*同学|小爱同学)$",
+        r"^你好$", r"^您好$", r"^在吗$", r"^在不在$",
+    ]
+    for pattern in wake_patterns:
+        if re.match(pattern, user_text.strip()):
+            return "在的，请问需要什么帮助？"
 
+    # 结束对话
     goodbye_patterns = [
         r"^再见$", r"^拜拜$", r"^拜拜了$", r"^再见了$",
         r"^没了$", r"^没有了$", r"^没事了$", r"^好了$",
-        r"^退下$", r"^跪安$", r"^可以了$", r"^就这样$",
+        r"^退下$", r"^退下吧$", r"^跪安$", r"^可以了$", r"^就这样$",
+        r"^不用了$", r"^不用$", r"^谢谢$", r"^多谢$",
     ]
     for pattern in goodbye_patterns:
         if re.match(pattern, user_text.strip()):
-            return [make_tool_call("end_conversation")]
+            return "好的，为您服务。"
+
+    # 抱怨类对话
+    complain_patterns = [
+        r"(那你.*没|没关啊|没.*啊)",
+    ]
+    for pattern in complain_patterns:
+        if re.search(pattern, user_text.strip()):
+            return "抱歉，我会再试一次。"
 
     return []
 
@@ -854,6 +976,7 @@ def process_request(user_text, available_tool_names):
         available_tool_names = {
             "set_climate_power", "set_climate_auto", "control_climate_temperature",
             "set_light_state", "set_auto_headlight", "set_rear_fog_lamp", "set_reading_light",
+            "control_windows", "control_sunroof", "control_curtain",
             "set_window_state", "set_sunroof_state", "set_roof_state",
             "control_vehicle", "set_vehicle_power",
             "set_seat_position", "set_seat_heating", "set_seat_ventilation",
@@ -866,6 +989,9 @@ def process_request(user_text, available_tool_names):
             "get_driving_status", "get_door_status", "get_window_status",
             "get_sunroof_status", "get_sunshade_status", "get_lock_status",
             "get_mirror_status", "get_seat_status",
+            "set_roof_state", "set_energy_recovery",
+            "set_auto_brightness", "set_screen_cleaning", "control_passenger_screen",
+            "set_media_volume",
         }
         match_detail["fallback_reason"] = "客户端未发送 tools 定义，已启用全部工具"
     
@@ -898,7 +1024,7 @@ def process_request(user_text, available_tool_names):
         ("导航", match_navigation),
         ("结果选择", match_select_result),
         ("翻页", match_change_page),
-        ("状态读取", match_status_read),
+        # 执行类命令优先（在状态读取之前）
         ("灯光", match_light),
         ("空调", match_climate),
         ("车窗", match_window),
@@ -907,6 +1033,8 @@ def process_request(user_text, available_tool_names):
         ("显示", match_display),
         ("音量", match_volume),
         ("媒体", match_media),
+        # 状态读取在最后（只在没有匹配到执行命令时才读取状态）
+        ("状态读取", match_status_read),
     ]
 
     for name, matcher in matchers:
