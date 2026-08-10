@@ -15,11 +15,11 @@ if [ ! -f /etc/redhat-release ]; then
     exit 1
 fi
 
-echo "[1/4] Installing dependencies..."
+echo "[1/5] Installing dependencies..."
 yum install -y epel-release
 yum install -y python3 python3-pip tar gzip
 
-echo "[2/4] Downloading..."
+echo "[2/5] Downloading..."
 FILE_NAME="benben-ai-1.0.0.tar.gz"
 MIRRORS=(
     "https://raw.githubusercontent.com/794414-web/benben-ai-server/main/$FILE_NAME"
@@ -55,7 +55,7 @@ if [ $download_ok -eq 0 ]; then
     exit 1
 fi
 
-echo "[3/4] Extracting and installing..."
+echo "[3/5] Extracting and installing..."
 tar xzf src.tar.gz
 
 if [ -d "benben-ai-1.0.0" ]; then
@@ -73,18 +73,30 @@ cp etc/systemd/benben-ai.service /etc/systemd/system/
 
 chmod +x /usr/local/benben-ai/fake_llm_server.py
 
-echo "[4/4] Starting service..."
+echo "[4/5] Installing Python dependencies..."
+cd /usr/local/benben-ai
+pip3 install --upgrade pip --quiet 2>/dev/null || true
+pip3 install -r requirements.txt || {
+    echo ""
+    echo "ERROR: Failed to install Python dependencies!"
+    echo "Try: pip3 install fastapi uvicorn[standard] pydantic"
+    exit 1
+}
+echo "Python dependencies installed OK"
+
+echo "[5/5] Starting service..."
 systemctl daemon-reload
 systemctl enable benben-ai
 systemctl start benben-ai
 
-cd /usr/local/benben-ai
-echo "Upgrading pip..."
-pip3 install --upgrade pip --quiet 2>/dev/null || true
-echo "Installing Python dependencies..."
-pip3 install -r requirements.txt --quiet 2>/dev/null || pip3 install -r requirements.txt 2>/dev/null || echo "NOTE: Python deps install skipped"
-echo "Verifying service..."
-systemctl is-active benben-ai && echo "Service is running!" || echo "NOTE: service may need manual start"
+sleep 2
+if systemctl is-active --quiet benben-ai; then
+    echo "Service started successfully!"
+else
+    echo ""
+    echo "WARNING: Service may have failed to start. Check logs:"
+    echo "  journalctl -u benben-ai -n 30"
+fi
 
 rm -rf /opt/benben-install
 
