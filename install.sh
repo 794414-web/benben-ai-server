@@ -1,6 +1,6 @@
 #!/bin/bash
 # BenBen AI Assistant - One-Click Install
-# Direct installation (no RPM build required)
+# Supports CentOS 7 (Python 3.6 default) - auto-installs Python 3.9
 set -e
 
 echo "=== BenBen AI Installer ==="
@@ -15,7 +15,7 @@ if [ ! -f /etc/redhat-release ]; then
     exit 1
 fi
 
-# 自动清理旧版本（如果存在）
+# 自动清理旧版本
 if systemctl list-unit-files benben-ai &>/dev/null; then
     echo "[Cleanup] Removing old installation..."
     systemctl stop benben-ai 2>/dev/null || true
@@ -25,14 +25,49 @@ if systemctl list-unit-files benben-ai &>/dev/null; then
     rm -rf /usr/local/benben-ai
     rm -rf /etc/benben-ai
     rm -rf /var/lib/benben-ai
-    echo "[Cleanup] Old version removed"
+    echo "[Cleanup] Done"
 fi
 
-echo "[1/5] Installing dependencies..."
-yum install -y epel-release
-yum install -y python3 python3-pip tar gzip
+echo "[1/6] Installing base packages..."
+yum install -y epel-release 2>/dev/null || true
+yum install -y curl tar gzip gcc openssl-devel bzip2-devel libffi-devel zlib-devel make 2>/dev/null || true
 
-echo "[2/5] Downloading..."
+# 安装 Python 3.9
+PYTHON_BIN=""
+if [ -x /usr/local/bin/python3.9 ]; then
+    PYTHON_BIN="/usr/local/bin/python3.9"
+    echo "[Python] Python 3.9 already installed"
+elif [ -x /opt/rh/rh-python39/root/usr/bin/python3 ]; then
+    PYTHON_BIN="/opt/rh/rh-python39/root/usr/bin/python3"
+    echo "[Python] Using SCL Python 3.9"
+else
+    echo "[Python] Installing Python 3.9..."
+    # 尝试 SCL 方式
+    if yum install -y centos-release-scl-rh 2>/dev/null && yum install -y rh-python39 2>/dev/null; then
+        ln -sf /opt/rh/rh-python39/root/usr/bin/python3 /usr/local/bin/python3.9
+        ln -sf /opt/rh/rh-python39/root/usr/bin/pip3 /usr/local/bin/pip3.9
+        PYTHON_BIN="/usr/local/bin/python3.9"
+        echo "[Python] Python 3.9 installed via SCL"
+    else
+        # 编译安装
+        echo "[Python] Compiling Python 3.9 from source..."
+        cd /tmp
+        curl -sSL "https://www.python.org/ftp/python/3.9.19/Python-3.9.19.tgz" -o Python-3.9.19.tgz
+        tar xzf Python-3.9.19.tgz
+        cd Python-3.9.19
+        ./configure --prefix=/usr/local --enable-optimizations 2>/dev/null || ./configure --prefix=/usr/local
+        make -j$(nproc) 2>/dev/null || make
+        make altinstall 2>/dev/null || make install
+        cd /tmp && rm -rf Python-3.9.19 Python-3.9.19.tgz
+        PYTHON_BIN="/usr/local/bin/python3.9"
+        echo "[Python] Python 3.9 compiled and installed"
+    fi
+fi
+
+echo "[Python] Python path: $PYTHON_BIN"
+$PYTHON_BIN --version
+
+echo "[2/6] Downloading application..."
 FILE_NAME="benben-ai-1.0.0.tar.gz"
 MIRRORS=(
     "https://raw.githubusercontent.com/794414-web/benben-ai-server/main/$FILE_NAME"
@@ -59,18 +94,14 @@ done
 if [ $download_ok -eq 0 ]; then
     echo ""
     echo "ERROR: All download mirrors failed!"
-    echo "Please manually download $FILE_NAME from one of:"
     for mirror in "${MIRRORS[@]}"; do
         echo "  $mirror"
     done
-    echo "Then run:"
-    echo "  cd /opt/benben-install && tar xzf $FILE_NAME && cd benben-ai-1.0.0"
     exit 1
 fi
 
-echo "[3/5] Extracting and installing..."
+echo "[3/6] Extracting files..."
 tar xzf src.tar.gz
-
 if [ -d "benben-ai-1.0.0" ]; then
     cd benben-ai-1.0.0
 fi
@@ -84,25 +115,26 @@ cp -r usr/local/benben-ai/* /usr/local/benben-ai/
 cp etc/benben-ai/config.json /etc/benben-ai/
 cp etc/systemd/benben-ai.service /etc/systemd/system/
 
+# 用实际 Python 路径替换 service 文件中的占位符
+sed -i "s|__PYTHON_BIN__|$PYTHON_BIN|g" /etc/systemd/system/benben-ai.service
 chmod +x /usr/local/benben-ai/fake_llm_server.py
 
-echo "[4/5] Installing Python dependencies..."
+echo "[4/6] Installing Python dependencies..."
 cd /usr/local/benben-ai
-pip3 install --upgrade pip --quiet 2>/dev/null || true
-pip3 install -r requirements.txt || {
+$PYTHON_BIN -m pip install --upgrade pip --quiet 2>/dev/null || true
+$PYTHON_BIN -m pip install -r requirements.txt || {
     echo ""
     echo "ERROR: Failed to install Python dependencies!"
-    echo "Try: pip3 install fastapi uvicorn[standard] pydantic"
     exit 1
 }
 echo "Python dependencies installed OK"
 
-echo "[5/5] Starting service..."
+echo "[5/6] Starting service..."
 systemctl daemon-reload
 systemctl enable benben-ai
 systemctl start benben-ai
 
-sleep 2
+sleep 3
 if systemctl is-active --quiet benben-ai; then
     echo "Service started successfully!"
 else
@@ -111,18 +143,19 @@ else
     journalctl -u benben-ai -n 20 --no-pager 2>/dev/null
     echo "================================="
     echo ""
-    echo "Trying to run manually for more info..."
+    echo "Manual test:"
     cd /usr/local/benben-ai
-    timeout 3 python3 fake_llm_server.py 2>&1 || true
+    timeout 3 $PYTHON_BIN fake_llm_server.py 2>&1 || true
     echo ""
 fi
 
+echo "[6/6] Cleaning up..."
 rm -rf /opt/benben-install
 
 echo ""
 echo "=== Installation Complete ==="
 echo ""
-IP=$(hostname -I | cut -d" " -f1)
+IP=$(hostname -I 2>/dev/null | cut -d" " -f1 || hostname -I | awk '{print $1}')
 echo "Service URL: http://$IP:9998/compatible-mode/v1"
 echo "Admin Panel: http://$IP:9998/admin"
 echo "Default Password: admin123456"
